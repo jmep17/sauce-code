@@ -33,7 +33,17 @@ The raw capture log and a summary are written to `./output/<repo>-<branch>/`.
 ```bash
 npm install
 npm run build
+npm link                          # puts the `sauce-code` command on your PATH
 npx playwright install chromium   # required for the capture step
+```
+
+`npm link` symlinks the built `dist/cli.js` as a global `sauce-code` binary. Re-run `npm run build`
+after changing source (the link points at `dist/`, not `src/`). If npm's global bin directory isn't on
+your `PATH` (common with nvm/fnm/Homebrew node), either add it — `export PATH="$(npm prefix -g)/bin:$PATH"` —
+or skip the global command and run from source instead:
+
+```bash
+npm run dev -- --repo ./my-app --branch main   # tsx src/cli.ts, no build/link needed
 ```
 
 ## Usage
