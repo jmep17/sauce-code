@@ -78,4 +78,3 @@ cleanup — spawn dev servers through `spawnLongLived`, not raw execa.
   True WebSockets are out of scope.
 - Runtime dirs `worktrees/`, `output/`, `.cache/` are gitignored. The fixture's
   `examples/vite-auth0-app/.env` (fake values) is intentionally un-ignored via a `.gitignore` negation.
-- Develop on the `claude/auto-mock-api-calls-3r0nns` branch; do not push elsewhere without permission.
