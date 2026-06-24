@@ -141,3 +141,10 @@ dist
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 .vite/
+
+# sauce-code runtime artifacts
+worktrees/
+output/
+
+# Keep the example fixture's env (fake Auth0 values, needed for verification)
+!examples/vite-auth0-app/.env
