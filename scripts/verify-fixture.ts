@@ -60,6 +60,8 @@ async function main() {
   check("auth flavor = auth0-spa", auth.flavor === "auth0-spa");
   check("auth domain parsed", auth.domain === "sauce-fixture.us.auth0.com");
   check("auth clientId parsed", !!auth.clientId);
+  // Distinct from DEFAULT_SCOPE, so this proves env parsing (not a coincidental match).
+  check("auth scope parsed from env", auth.scope === "openid profile email read:reports");
 
   // 4. Install deps.
   await installDeps(app.dir, pm);
@@ -108,12 +110,13 @@ async function main() {
     idToken: "fake.id.token",
     accessToken: "fake.access.token",
     user: { sub: "auth0|fixture", name: "Sauce Tester" },
+    scope: auth.scope,
   });
   const files = generateMswFiles(sampleRoutes, { authSeed });
   check("authSeedTs emitted", !!files.authSeedTs);
   check(
     "authSeedTs has the token cache key",
-    !!files.authSeedTs?.includes("@@auth0spajs@@::FAKEclientIDfixture0000000::https://sauce-fixture/api::openid profile email"),
+    !!files.authSeedTs?.includes("@@auth0spajs@@::FAKEclientIDfixture0000000::https://sauce-fixture/api::openid profile email read:reports"),
   );
   check("authSeedTs has the @@user@@ key", !!files.authSeedTs?.includes("@@user@@"));
   check(

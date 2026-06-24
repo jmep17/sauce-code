@@ -13,6 +13,8 @@ export interface AuthInfo {
   audience?: string;
   /** Configured callback/redirect URL, if discoverable from env. */
   callbackUrl?: string;
+  /** Requested OAuth scope, if declared in env (e.g. AUTH0_SCOPE). */
+  scope?: string;
   /** The raw env keys we matched, for diagnostics. */
   matchedKeys: string[];
 }
@@ -56,8 +58,9 @@ export async function detectAuth(appDir: string, pkg: PackageJson): Promise<Auth
   const clientId = pick("AUTH0_CLIENT_ID");
   const audience = pick("AUTH0_AUDIENCE");
   const callbackUrl = pick("AUTH0_CALLBACK_URL", "AUTH0_BASE_URL", "AUTH0_REDIRECT_URI");
+  const scope = pick("AUTH0_SCOPE");
 
-  return { flavor, domain, clientId, audience, callbackUrl, matchedKeys };
+  return { flavor, domain, clientId, audience, callbackUrl, scope, matchedKeys };
 }
 
 function normalizeDomain(value: string): string {

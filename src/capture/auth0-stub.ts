@@ -11,8 +11,17 @@ export interface AuthStub {
   /**
    * For `auth0-spa` apps, the localStorage session footprint to also seed in the
    * relaunched app (codegen emits it as `mocks/auth-seed.ts`). Undefined otherwise.
+   *
+   * This is the *initial* seed (built before navigation with a best-guess scope).
+   * Call `finalizeSpaSeed()` after the crawl to get the scope-correct version.
    */
   spaSeed?: SpaSeed;
+  /**
+   * Re-derive the SPA seed using the scope observed on the app's real `/authorize`
+   * request during the crawl. Call after crawling, before codegen. Falls back to
+   * the env/default scope when no `/authorize` fired. Undefined for non-SPA flows.
+   */
+  finalizeSpaSeed?: () => Promise<SpaSeed | undefined>;
 }
 
 const FAKE_USER = {
@@ -41,8 +50,11 @@ const FAKE_USER = {
  *  3. For SPAs, also seed the auth0-spa-js localStorage cache via addInitScript
  *     so `isAuthenticated` is true on first paint with zero network.
  *
- * Must be called BEFORE the recorder's catch-all is attached and before the
- * first navigation, so these handlers take precedence for the auth host.
+ * Must be called AFTER the recorder's catch-all is attached but before the first
+ * navigation: Playwright runs matching route handlers last-registered-first, so
+ * registering this stub last lets it win for the auth host. Its handlers fulfill
+ * without falling through, so the recorder never proxies auth traffic to the real
+ * tenant.
  */
 export async function installAuth0Stub(
   context: BrowserContext,
@@ -86,8 +98,12 @@ export async function installAuth0Stub(
   // The SDK generates a random nonce per /authorize and validates the returned
   // id_token's nonce matches. We capture nonce + state per generated code so the
   // token minted at /oauth/token carries the correct nonce.
-  const txByCode = new Map<string, { nonce?: string; state?: string }>();
+  const txByCode = new Map<string, { nonce?: string; state?: string; scope?: string }>();
   let codeSeq = 0;
+  // The scope the app actually requests on /authorize. The auth0-spa-js SDK uses
+  // the exact same string in its localStorage cache key, so capturing it here lets
+  // us replay a key-matching seed into the relaunched app (see finalizeSpaSeed).
+  let capturedScope: string | undefined;
 
   // 2. Stub tenant endpoints.
   const authBase = `https://${domain}`;
@@ -105,23 +121,30 @@ export async function installAuth0Stub(
     if (pathname === "/authorize") {
       const state = url.searchParams.get("state") ?? "sauce-state";
       const nonce = url.searchParams.get("nonce") ?? undefined;
+      const scope = url.searchParams.get("scope") ?? undefined;
+      const reqAudience = url.searchParams.get("audience") ?? undefined;
+      // Prefer the scope from the request whose audience matches the one we seed;
+      // otherwise take the first scope we see. Single-audience apps always hit the
+      // first branch.
+      if (scope && (capturedScope === undefined || reqAudience === auth.audience)) {
+        capturedScope = scope;
+      }
       const code = `sauce-code-${codeSeq++}`;
-      txByCode.set(code, { nonce, state });
+      txByCode.set(code, { nonce, state, scope });
       return handleAuthorize(route, url, callbackUrl, code, state);
     }
     if (pathname === "/oauth/token") {
       const code = await readCodeFromTokenRequest(req);
       const tx = (code && txByCode.get(code)) || {};
+      const scope = tx.scope ?? auth.scope ?? DEFAULT_SCOPE;
       const idToken = await signToken(clientId, tx.nonce);
-      const accessToken = await signToken(audience, undefined, {
-        scope: "openid profile email",
-      });
+      const accessToken = await signToken(audience, undefined, { scope });
       return fulfillJson(route, {
         access_token: accessToken,
         id_token: idToken,
         token_type: "Bearer",
         expires_in: 86_400,
-        scope: "openid profile email",
+        scope,
       });
     }
     if (pathname === "/userinfo") {
@@ -138,22 +161,34 @@ export async function installAuth0Stub(
   // 3. Seed the auth0-spa-js localStorage cache for SPA flows (covers the
   //    cacheLocation:'localstorage' case where the SDK skips the network entirely).
   //    The same seed is returned so codegen can replay it in the relaunched app.
+  //    The cache key embeds the scope (`@@auth0spajs@@::clientId::audience::scope`),
+  //    so the seed must use the scope the app actually requests. We don't learn that
+  //    until the app calls /authorize during the crawl (which runs AFTER this), so we
+  //    build an initial seed with a best-guess scope (env or default) and expose
+  //    finalizeSpaSeed() to rebuild it with the captured scope before codegen.
   let spaSeed: SpaSeed | undefined;
+  let finalizeSpaSeed: (() => Promise<SpaSeed | undefined>) | undefined;
   if (auth.flavor === "auth0-spa") {
-    const seedId = await signToken(clientId, undefined);
-    const seedAccess = await signToken(audience, undefined, { scope: DEFAULT_SCOPE });
-    spaSeed = buildSpaSeed({
-      clientId,
-      // The SDK uses the literal "default" in the cache key when no audience is configured.
-      audience: auth.audience ?? "default",
-      idToken: seedId,
-      accessToken: seedAccess,
-      user: FAKE_USER,
-    });
+    const buildSeed = async (scope: string): Promise<SpaSeed> => {
+      const seedId = await signToken(clientId, undefined);
+      const seedAccess = await signToken(audience, undefined, { scope });
+      return buildSpaSeed({
+        clientId,
+        // The SDK uses the literal "default" in the cache key when no audience is configured.
+        audience: auth.audience ?? "default",
+        idToken: seedId,
+        accessToken: seedAccess,
+        user: FAKE_USER,
+        scope,
+      });
+    };
+    const initialScope = auth.scope ?? DEFAULT_SCOPE;
+    spaSeed = await buildSeed(initialScope);
     await context.addInitScript({ content: renderSpaSeedScript(spaSeed) });
+    finalizeSpaSeed = async () => buildSeed(capturedScope ?? auth.scope ?? DEFAULT_SCOPE);
   }
 
-  return { authHosts: [domain], user: FAKE_USER, spaSeed };
+  return { authHosts: [domain], user: FAKE_USER, spaSeed, finalizeSpaSeed };
 }
 
 function openidConfig(domain: string) {

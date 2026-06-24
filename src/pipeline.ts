@@ -115,6 +115,21 @@ export async function run(config: RunConfig): Promise<void> {
       auth: auth.flavor,
       visited: capture.visited,
       calls: capture.calls,
+      // Slim auth summary for debugging scope/seed issues; the tokenKey reveals
+      // the scope baked into the relaunched app's localStorage cache key.
+      authStub: capture.authStub
+        ? {
+            authHosts: capture.authStub.authHosts,
+            user: capture.authStub.user,
+            spaSeed: capture.authStub.spaSeed
+              ? {
+                  tokenKey: capture.authStub.spaSeed.tokenKey,
+                  userKey: capture.authStub.spaSeed.userKey,
+                  manifestKey: capture.authStub.spaSeed.manifestKey,
+                }
+              : undefined,
+          }
+        : undefined,
     });
 
     // ── 8a. Generate MSW handlers ────────────────────────────────────────
@@ -194,15 +209,18 @@ async function captureApiCalls(args: {
   try {
     session = await launchBrowser({ headed: config.headed });
 
-    // Auth stub MUST be registered before the recorder's catch-all and before
-    // navigation, so its routes win for the auth host and the first load is authed.
+    // Register the recorder's catch-all FIRST, then the auth stub: Playwright runs
+    // matching route handlers last-registered-first, so the stub (added last) wins
+    // for the auth host and short-circuits /authorize, instead of the recorder
+    // proxying it to the real tenant. The stub also runs before navigation so the
+    // first load is authed.
+    const recorder = await attachRecorder(session.context);
+
     let authStub: AuthStub | undefined;
     if (auth.flavor !== "none") {
       authStub = await installAuth0Stub(session.context, dev.url, auth);
       if (authStub) logger.info(`Injected fake Auth0 session (host: ${authStub.authHosts.join(", ")})`);
     }
-
-    const recorder = await attachRecorder(session.context);
 
     const visited = await withSpinner("Crawling + capturing API calls", () =>
       crawl({
@@ -216,6 +234,12 @@ async function captureApiCalls(args: {
     );
 
     await recorder.stop();
+    // Rebuild the SPA seed with the scope observed on the app's real /authorize
+    // during the crawl, so the relaunched app's cache key matches and it never
+    // redirects to the real tenant.
+    if (authStub?.finalizeSpaSeed) {
+      authStub = { ...authStub, spaSeed: await authStub.finalizeSpaSeed() };
+    }
     return { calls: recorder.calls, visited, authStub };
   } finally {
     await session?.close();

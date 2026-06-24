@@ -18,9 +18,9 @@ export interface Recorder {
  * redirects and some resource types. `route.fetch()` performs the real request
  * and hands us an APIResponse we fully own, so the body is always readable.
  *
- * `extraRoutes` lets callers (e.g. the Auth0 stub) register handlers that run
- * BEFORE this catch-all; Playwright invokes the most recently added handler
- * first, so the stub is attached after this and wins for its URLs.
+ * Attach this catch-all FIRST, then let narrower handlers (e.g. the Auth0 stub)
+ * register after it: Playwright invokes the most recently added handler first, so
+ * those later handlers win for their URLs while this records everything else.
  */
 export async function attachRecorder(
   context: BrowserContext,

@@ -17,6 +17,9 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
       useRefreshTokens={false}
       authorizationParams={{
         redirect_uri: window.location.origin,
+        // Custom scope, a superset of VITE_AUTH0_SCOPE, so sauce-code's capture must
+        // observe it on /authorize and bake it into the relaunch seed's cache key.
+        scope: "openid profile email read:reports admin:all",
         ...(audience ? { audience } : {}),
       }}
     >
