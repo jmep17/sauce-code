@@ -11,8 +11,9 @@ Usage:
   sauce-code [options]
 
 Options:
-  --repo <path|url>     Local repo path or remote git URL (prompted if omitted)
-  --branch <name>       Branch to check out (prompted if omitted)
+  --repo <path|url>     Local repo path or remote git URL. If omitted, pick from
+                        your GitHub repos (via gh) or enter a path/URL — searchable.
+  --branch <name>       Branch to check out (searchable picker if omitted)
   --depth <n>           Crawl depth from the entry route (default: 2)
   --max-pages <n>       Max pages to visit while crawling (default: 25)
   --headed              Run the browser visibly (default: headless)
