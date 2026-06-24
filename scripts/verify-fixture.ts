@@ -23,6 +23,7 @@ import { installDeps } from "../src/server/install.js";
 import { startDevServer } from "../src/server/devserver.js";
 import { generateMswFiles } from "../src/generate/msw.js";
 import { injectMocks } from "../src/inject/mocks.js";
+import { buildSpaSeed } from "../src/capture/spa-seed.js";
 import type { MockRoute } from "../src/capture/types.js";
 
 const checks: Array<[string, boolean]> = [];
@@ -100,13 +101,35 @@ async function main() {
       sampleCount: 1,
     },
   ];
-  const files = generateMswFiles(sampleRoutes);
+  // Build the fake-session seed the same way the pipeline does, from detected auth.
+  const authSeed = buildSpaSeed({
+    clientId: auth.clientId ?? "sauce-code-client",
+    audience: auth.audience ?? "default",
+    idToken: "fake.id.token",
+    accessToken: "fake.access.token",
+    user: { sub: "auth0|fixture", name: "Sauce Tester" },
+  });
+  const files = generateMswFiles(sampleRoutes, { authSeed });
+  check("authSeedTs emitted", !!files.authSeedTs);
+  check(
+    "authSeedTs has the token cache key",
+    !!files.authSeedTs?.includes("@@auth0spajs@@::FAKEclientIDfixture0000000::https://sauce-fixture/api::openid profile email"),
+  );
+  check("authSeedTs has the @@user@@ key", !!files.authSeedTs?.includes("@@user@@"));
+  check(
+    "authSeedTs has the manifest key",
+    !!files.authSeedTs?.includes('"@@auth0spajs@@::FAKEclientIDfixture0000000"'),
+  );
+
   const injected = await injectMocks({ appDir: app.dir, framework, pm, files });
 
   const exists = async (p: string) => !!(await fs.stat(path.join(app.dir, p)).catch(() => null));
   check("mocks/handlers.ts written", await exists("mocks/handlers.ts"));
   check("mocks/browser.ts written", await exists("mocks/browser.ts"));
   check("mocks/auto.ts written", await exists("mocks/auto.ts"));
+  check("mocks/auth-seed.ts written", await exists("mocks/auth-seed.ts"));
+  const autoTs = await fs.readFile(path.join(app.dir, "mocks", "auto.ts"), "utf8");
+  check("auto.ts imports the auth seed first", autoTs.includes('import "./auth-seed";'));
   check("service worker installed", injected.workerInstalled);
   check("public/mockServiceWorker.js exists", await exists("public/mockServiceWorker.js"));
   const indexHtml = await fs.readFile(path.join(app.dir, "index.html"), "utf8");

@@ -1,12 +1,18 @@
 import * as jose from "jose";
 import type { BrowserContext, Route } from "playwright";
 import type { AuthInfo } from "../detect/auth.js";
+import { buildSpaSeed, renderSpaSeedScript, DEFAULT_SCOPE, type SpaSeed } from "./spa-seed.js";
 
 export interface AuthStub {
   /** Hostnames that belong to the auth provider (excluded from generated mocks). */
   authHosts: string[];
   /** The fake user object the app will see. */
   user: Record<string, unknown>;
+  /**
+   * For `auth0-spa` apps, the localStorage session footprint to also seed in the
+   * relaunched app (codegen emits it as `mocks/auth-seed.ts`). Undefined otherwise.
+   */
+  spaSeed?: SpaSeed;
 }
 
 const FAKE_USER = {
@@ -131,21 +137,23 @@ export async function installAuth0Stub(
 
   // 3. Seed the auth0-spa-js localStorage cache for SPA flows (covers the
   //    cacheLocation:'localstorage' case where the SDK skips the network entirely).
+  //    The same seed is returned so codegen can replay it in the relaunched app.
+  let spaSeed: SpaSeed | undefined;
   if (auth.flavor === "auth0-spa") {
     const seedId = await signToken(clientId, undefined);
-    const seedAccess = await signToken(audience, undefined, { scope: "openid profile email" });
-    const cacheEntry = buildSpaCacheEntry({
+    const seedAccess = await signToken(audience, undefined, { scope: DEFAULT_SCOPE });
+    spaSeed = buildSpaSeed({
       clientId,
-      audience,
-      accessToken: seedAccess,
+      // The SDK uses the literal "default" in the cache key when no audience is configured.
+      audience: auth.audience ?? "default",
       idToken: seedId,
+      accessToken: seedAccess,
       user: FAKE_USER,
-      expiresAt: Math.floor(Date.now() / 1000) + 86_400,
     });
-    await context.addInitScript(seedScript, cacheEntry);
+    await context.addInitScript({ content: renderSpaSeedScript(spaSeed) });
   }
 
-  return { authHosts: [domain], user: FAKE_USER };
+  return { authHosts: [domain], user: FAKE_USER, spaSeed };
 }
 
 function openidConfig(domain: string) {
@@ -227,50 +235,6 @@ function webMessageHtml(code: string, state: string): string {
     if (target) target.postMessage(data, "*");
   })();
   </script></body></html>`;
-}
-
-interface SpaCacheParams {
-  clientId: string;
-  audience: string;
-  accessToken: string;
-  idToken: string;
-  user: Record<string, unknown>;
-  expiresAt: number;
-}
-
-/** Build the localStorage key/value auth0-spa-js expects for a cached session. */
-function buildSpaCacheEntry(p: SpaCacheParams): { key: string; value: string } {
-  const scope = "openid profile email";
-  const key = `@@auth0spajs@@::${p.clientId}::${p.audience}::${scope}`;
-  const value = JSON.stringify({
-    body: {
-      client_id: p.clientId,
-      access_token: p.accessToken,
-      id_token: p.idToken,
-      scope,
-      expires_in: 86_400,
-      token_type: "Bearer",
-      audience: p.audience,
-      oauthTokenScope: scope,
-      decodedToken: {
-        claims: { __raw: p.idToken, ...p.user },
-        user: p.user,
-      },
-    },
-    expiresAt: p.expiresAt,
-  });
-  return { key, value };
-}
-
-/** Runs in the page before any app code: writes the cached session entry. */
-function seedScript(entry: { key: string; value: string }) {
-  try {
-    window.localStorage.setItem(entry.key, entry.value);
-    // auth0-spa-js also keeps a "logged in" hint cookie in some versions.
-    document.cookie = "auth0.is.authenticated=true; path=/";
-  } catch {
-    /* storage may be unavailable in some contexts */
-  }
 }
 
 function fulfillJson(route: Route, body: unknown) {

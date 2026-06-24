@@ -130,7 +130,7 @@ export async function run(config: RunConfig): Promise<void> {
     }
     logger.info(`Generated ${routes.length} mock route(s) (skipped ${skipped} non-API/aux calls)`);
 
-    const files = generateMswFiles(routes);
+    const files = generateMswFiles(routes, { authSeed: capture.authStub?.spaSeed });
     await writeFile(path.join(outDir, "summary.md"), renderSummary(routes, branch, framework.label));
 
     // Stop the capture dev server before mutating the worktree + relaunch.
